@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" role="img" aria-labelledby="uc-title uc-desc">
+  <title id="uc-title">UniConnect</title>
+  <desc id="uc-desc">Ícono de UniConnect: dos círculos conectados representando comunicación accesible</desc>
+  <circle cx="30" cy="50" r="22" fill="#1e40af"/>
+  <circle cx="70" cy="50" r="22" fill="#1e40af"/>
+  <rect x="28" y="44" width="44" height="12" rx="6" fill="#1e40af"/>
+  <circle cx="30" cy="50" r="10" fill="#ffffff"/>
+  <circle cx="70" cy="50" r="10" fill="#ffffff"/>
+</svg>

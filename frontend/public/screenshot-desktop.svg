@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="800" viewBox="0 0 1280 800">
+  <!-- Fondo -->
+  <rect width="1280" height="800" fill="#fafafa"/>
+
+  <!-- Aviso escritorio -->
+  <rect x="340" y="60" width="600" height="56" rx="8" fill="#dbeafe" stroke="#93c5fd" stroke-width="1"/>
+  <text x="640" y="85" font-family="system-ui,sans-serif" font-size="14" fill="#1e40af" text-anchor="middle" font-weight="600">Modo escritorio detectado</text>
+  <text x="640" y="105" font-family="system-ui,sans-serif" font-size="12" fill="#1e40af" text-anchor="middle">UniConnect está optimizada para Android. Vibración y voz pueden no estar disponibles.</text>
+
+  <!-- Selector de perfil centrado -->
+  <text x="640" y="175" font-family="system-ui,sans-serif" font-size="24" fill="#0f172a" text-anchor="middle" font-weight="700">UniConnect</text>
+  <text x="640" y="200" font-family="system-ui,sans-serif" font-size="14" fill="#64748b" text-anchor="middle">Selecciona tu perfil</text>
+
+  <!-- Grid de perfiles 4 columnas -->
+  <rect x="240" y="220" width="180" height="72" rx="8" fill="#1e40af"/>
+  <text x="330" y="261" font-family="system-ui,sans-serif" font-size="16" fill="#ffffff" text-anchor="middle">Ciego</text>
+
+  <rect x="440" y="220" width="180" height="72" rx="8" fill="#1e40af"/>
+  <text x="530" y="261" font-family="system-ui,sans-serif" font-size="16" fill="#ffffff" text-anchor="middle">Sordo</text>
+
+  <rect x="640" y="220" width="180" height="72" rx="8" fill="#1e40af"/>
+  <text x="730" y="261" font-family="system-ui,sans-serif" font-size="16" fill="#ffffff" text-anchor="middle">Mudo</text>
+
+  <rect x="840" y="220" width="180" height="72" rx="8" fill="#ffffff" stroke="#e2e8f0" stroke-width="1"/>
+  <text x="930" y="261" font-family="system-ui,sans-serif" font-size="16" fill="#0f172a" text-anchor="middle">Normal</text>
+
+  <rect x="240" y="308" width="180" height="72" rx="8" fill="#f1f5f9"/>
+  <text x="330" y="349" font-family="system-ui,sans-serif" font-size="14" fill="#1e293b" text-anchor="middle">Ciego + Sordo</text>
+
+  <rect x="440" y="308" width="180" height="72" rx="8" fill="#f1f5f9"/>
+  <text x="530" y="349" font-family="system-ui,sans-serif" font-size="14" fill="#1e293b" text-anchor="middle">Ciego + Mudo</text>
+
+  <rect x="640" y="308" width="180" height="72" rx="8" fill="#f1f5f9"/>
+  <text x="730" y="349" font-family="system-ui,sans-serif" font-size="14" fill="#1e293b" text-anchor="middle">Sordo + Mudo</text>
+
+  <rect x="840" y="308" width="180" height="72" rx="8" fill="#f1f5f9"/>
+  <text x="930" y="349" font-family="system-ui,sans-serif" font-size="14" fill="#1e293b" text-anchor="middle">Todos</text>
+
+  <!-- Footer -->
+  <text x="640" y="760" font-family="system-ui,sans-serif" font-size="12" fill="#94a3b8" text-anchor="middle">UniConnect — Comunicación Accesible para personas con diversidad funcional</text>
+</svg>

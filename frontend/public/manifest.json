@@ -1,0 +1,74 @@
+{
+  "id": "/uniconnect",
+  "name": "UniConnect - Comunicación Accesible",
+  "short_name": "UniConnect",
+  "description": "Aplicación de comunicación accesible con soporte para voz, vibración y alto contraste. Diseñada para personas con diversidad funcional.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#fafafa",
+  "theme_color": "#1e40af",
+  "orientation": "any",
+  "scope": "/",
+  "lang": "es-CO",
+  "categories": ["accessibility", "communication", "utilities"],
+  "icons": [
+    {
+      "src": "/icon-192x192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-192x192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "/icon-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+  "screenshots": [
+    {
+      "src": "/screenshot-mobile.svg",
+      "sizes": "390x844",
+      "type": "image/svg+xml",
+      "form_factor": "narrow",
+      "label": "UniConnect en móvil — interfaz de chat con frases rápidas y botón de emergencia"
+    },
+    {
+      "src": "/screenshot-desktop.svg",
+      "sizes": "1280x800",
+      "type": "image/svg+xml",
+      "form_factor": "wide",
+      "label": "UniConnect en escritorio — selector de perfil de accesibilidad"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Abrir chat",
+      "short_name": "Chat",
+      "description": "Ir directamente a la interfaz de comunicación",
+      "url": "/",
+      "icons": [{ "src": "/icon-192x192.png", "sizes": "192x192" }]
+    }
+  ],
+  "share_target": {
+    "action": "/",
+    "method": "GET",
+    "params": {
+      "title": "share_title",
+      "text": "share_text",
+      "url": "share_url"
+    }
+  }
+}
