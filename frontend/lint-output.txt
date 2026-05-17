@@ -1,0 +1,50 @@
+
+> my-project@0.1.0 lint
+> eslint .
+
+
+C:\Users\kevin\Documents\GitHub\UniConnect\frontend\__tests__\setup.test.ts
+  1:32  warning  'vi' is defined but never used. Allowed unused vars must match /^_/u  @typescript-eslint/no-unused-vars
+
+C:\Users\kevin\Documents\GitHub\UniConnect\frontend\app\page.tsx
+   21:183  warning  'ProfileSettings' is defined but never used. Allowed unused vars must match /^_/u                                  @typescript-eslint/no-unused-vars
+   29:6    warning  'ApiMessage' is defined but never used. Allowed unused vars must match /^_/u                                       @typescript-eslint/no-unused-vars
+  385:10   warning  'isAuthLoading' is assigned a value but never used. Allowed unused vars must match /^_/u                           @typescript-eslint/no-unused-vars
+  385:25   warning  'setIsAuthLoading' is assigned a value but never used. Allowed unused vars must match /^_/u                        @typescript-eslint/no-unused-vars
+  422:10   warning  'lastActivity' is assigned a value but never used. Allowed unused vars must match /^_/u                            @typescript-eslint/no-unused-vars
+  423:10   warning  'vibrateFlash' is assigned a value but never used. Allowed unused vars must match /^_/u                            @typescript-eslint/no-unused-vars
+  424:10   warning  'unreadCount' is assigned a value but never used. Allowed unused vars must match /^_/u                             @typescript-eslint/no-unused-vars
+  424:23   warning  'setUnreadCount' is assigned a value but never used. Allowed unused vars must match /^_/u                          @typescript-eslint/no-unused-vars
+  431:9    warning  'analyserRef' is assigned a value but never used. Allowed unused vars must match /^_/u                             @typescript-eslint/no-unused-vars
+  432:9    warning  'audioContextRef' is assigned a value but never used. Allowed unused vars must match /^_/u                         @typescript-eslint/no-unused-vars
+  433:9    warning  'animFrameRef' is assigned a value but never used. Allowed unused vars must match /^_/u                            @typescript-eslint/no-unused-vars
+  434:10   warning  'backendError' is assigned a value but never used. Allowed unused vars must match /^_/u                            @typescript-eslint/no-unused-vars
+  485:21   warning  Unexpected any. Specify a different type                                                                           @typescript-eslint/no-explicit-any
+  506:21   warning  Unexpected any. Specify a different type                                                                           @typescript-eslint/no-explicit-any
+  581:10   warning  Unused eslint-disable directive (no problems were reported from 'react-hooks/exhaustive-deps')
+  730:21   warning  Unexpected any. Specify a different type                                                                           @typescript-eslint/no-explicit-any
+  751:21   warning  Unexpected any. Specify a different type                                                                           @typescript-eslint/no-explicit-any
+  821:21   warning  Unexpected any. Specify a different type                                                                           @typescript-eslint/no-explicit-any
+  900:6    warning  React Hook useCallback has an unnecessary dependency: 'profile'. Either exclude it or remove the dependency array  react-hooks/exhaustive-deps
+  930:21   warning  Unexpected any. Specify a different type                                                                           @typescript-eslint/no-explicit-any
+  936:6    warning  React Hook useCallback has a missing dependency: 'speak'. Either include it or remove the dependency array         react-hooks/exhaustive-deps
+  988:21   warning  Unexpected any. Specify a different type                                                                           @typescript-eslint/no-explicit-any
+
+C:\Users\kevin\Documents\GitHub\UniConnect\frontend\hooks\use-toast.ts
+  18:7  warning  'actionTypes' is assigned a value but only used as a type. Allowed unused vars must match /^_/u  @typescript-eslint/no-unused-vars
+
+C:\Users\kevin\Documents\GitHub\UniConnect\frontend\lib\api.ts
+   33:16  warning  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
+   34:16  warning  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
+  119:70  warning  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
+  120:32  warning  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
+
+C:\Users\kevin\Documents\GitHub\UniConnect\frontend\vitest.setup.ts
+   1:10  warning  'expect' is defined but never used. Allowed unused vars must match /^_/u  @typescript-eslint/no-unused-vars
+  46:21  warning  Unexpected any. Specify a different type                                  @typescript-eslint/no-explicit-any
+  73:22  warning  Unexpected any. Specify a different type                                  @typescript-eslint/no-explicit-any
+  74:21  warning  Unexpected any. Specify a different type                                  @typescript-eslint/no-explicit-any
+
+Ô£û 32 problems (0 errors, 32 warnings)
+  0 errors and 1 warning potentially fixable with the `--fix` option.
+

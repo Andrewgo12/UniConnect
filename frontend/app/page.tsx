@@ -18,10 +18,15 @@ import {
   DrawerFooter, DrawerHeader, DrawerTitle,
 } from "@/components/ui/drawer"
 import { textToMorse } from "@/lib/morse"
+import { loginUser, registerUser, fetchMe, fetchMessages, postMessage, sendPhrase as apiSendPhrase, triggerEmergency as apiTriggerEmergency, fetchDefaultPhrases, ApiUser, ApiPhrase, ProfileSettings } from "@/lib/api"
 import { toast } from "sonner"
 import { useIsMobile } from "@/hooks/use-mobile"
 
 type Profile = { blind: boolean; deaf: boolean; mute: boolean }
+
+type AuthMode = "login" | "register"
+
+type ApiMessage = { id: string | number; content: string; type: string; created_at: string }
 
 const PHRASES = [
   { id: 1, text: "Sí", icon: "✓", vibration: [100] },
@@ -327,7 +332,7 @@ function BlindInterface({
           <AlertDialogHeader>
             <AlertDialogTitle>¿Enviar alerta de emergencia?</AlertDialogTitle>
             <AlertDialogDescription>
-              Se enviará el mensaje "🆘 EMERGENCIA" y se llamará al número de emergencias. Esta acción no se puede deshacer.
+              Se enviará el mensaje &quot;🆘 EMERGENCIA&quot; y se llamará al número de emergencias. Esta acción no se puede deshacer.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -367,6 +372,17 @@ export default function UniConnect() {
         .slice(-100) // máximo 100 mensajes en memoria
     } catch { return [] }
   })
+  const [token, setToken] = useState<string | null>(() => {
+    if (typeof window === "undefined") return null
+    return localStorage.getItem("uniconnect-token")
+  })
+  const [user, setUser] = useState<ApiUser | null>(null)
+  const [authMode, setAuthMode] = useState<AuthMode>("login")
+  const [authName, setAuthName] = useState("")
+  const [authEmail, setAuthEmail] = useState("")
+  const [authPassword, setAuthPassword] = useState("")
+  const [authError, setAuthError] = useState<string | null>(null)
+  const [isAuthLoading, setIsAuthLoading] = useState(false)
   const [inputText, setInputText] = useState("")
   const [isListening, setIsListening] = useState(false)
   const [emergencyDialogOpen, setEmergencyDialogOpen] = useState(false)
@@ -380,6 +396,7 @@ export default function UniConnect() {
       return saved ? JSON.parse(saved) : []
     } catch { return [] }
   })
+  const [defaultPhrases, setDefaultPhrases] = useState<Phrase[]>(PHRASES)
   const [newPhraseText, setNewPhraseText] = useState("")
   const [showAddPhrase, setShowAddPhrase] = useState(false)
   const [configDrawerOpen, setConfigDrawerOpen] = useState(false)
@@ -402,10 +419,10 @@ export default function UniConnect() {
     } catch { return { ttsEnabled: true, vibrationEnabled: true, highContrast: false, ttsRate: 0.9, ttsLang: "es-CO" } }
   })
   
-  const [lastActivity, setLastActivity] = useState(Date.now())
+  const [lastActivity, setLastActivity] = useState<number>(() => 0)
   const [vibrateFlash, setVibrateFlash] = useState(false)
   const [unreadCount, setUnreadCount] = useState(0)
-  const lastActivityRef = useRef(Date.now())
+  const lastActivityRef = useRef<number>(0)
   const profileRef = useRef(profile)
   const recognitionRef = useRef<SpeechRecognition | null>(null)
   const synthRef = useRef<SpeechSynthesis | null>(null)
@@ -414,6 +431,106 @@ export default function UniConnect() {
   const analyserRef = useRef<AnalyserNode | null>(null)
   const audioContextRef = useRef<AudioContext | null>(null)
   const animFrameRef = useRef<number | null>(null)
+  const [backendError, setBackendError] = useState<string | null>(null)
+
+  useEffect(() => {
+    let active = true
+
+    fetchDefaultPhrases()
+      .then((phrases) => {
+        if (!active) return
+        setDefaultPhrases(phrases.map((phrase: ApiPhrase) => ({
+          id: phrase.id,
+          text: phrase.text,
+          icon: phrase.icon,
+          vibration: phrase.vibration_pattern || [],
+        })))
+      })
+      .catch((error) => {
+        console.warn("No se pudieron cargar las frases del backend:", error)
+      })
+
+    return () => { active = false }
+  }, [])
+
+  const handleAuthSuccess = useCallback((auth: { access_token: string; user: ApiUser }) => {
+    setToken(auth.access_token)
+    localStorage.setItem("uniconnect-token", auth.access_token)
+    setUser(auth.user)
+
+    const profileSettings = auth.user.profile?.accessibility_settings
+    if (profileSettings) {
+      setProfile({
+        blind: profileSettings.blind ?? auth.user.profile.blind ?? false,
+        deaf: profileSettings.deaf ?? auth.user.profile.deaf ?? false,
+        mute: profileSettings.mute ?? auth.user.profile.mute ?? false,
+      })
+    }
+
+    setAuthError(null)
+  }, [])
+
+  const loadUserFromToken = useCallback(async () => {
+    if (!token) return
+    try {
+      const authUser = await fetchMe(token)
+      setUser(authUser)
+      const profileSettings = authUser.profile?.accessibility_settings
+      setProfile({
+        blind: profileSettings?.blind ?? authUser.profile.blind ?? false,
+        deaf: profileSettings?.deaf ?? authUser.profile.deaf ?? false,
+        mute: profileSettings?.mute ?? authUser.profile.mute ?? false,
+      })
+      setBackendError(null)
+    } catch (error: any) {
+      console.error("Error loading user:", error)
+      setAuthError("No se pudo cargar el usuario. Inicia sesión nuevamente.")
+      setToken(null)
+      localStorage.removeItem("uniconnect-token")
+      setUser(null)
+      setProfile(null)
+    }
+  }, [token])
+
+  const loadMessagesFromBackend = useCallback(async () => {
+    if (!token) return
+    try {
+      const remoteMessages = await fetchMessages(token)
+      setMessages(remoteMessages.slice(-100).map(msg => ({
+        id: msg.id.toString(),
+        text: msg.content,
+        from: msg.type === "text" || msg.type === "phrase" ? "me" : "other",
+        time: new Date(msg.created_at),
+      })))
+      setBackendError(null)
+    } catch (error: any) {
+      console.warn("No se pudieron cargar los mensajes:", error)
+      setBackendError("No se pudieron cargar los mensajes del backend.")
+    }
+  }, [token])
+
+  const logout = useCallback(() => {
+    setToken(null)
+    setUser(null)
+    localStorage.removeItem("uniconnect-token")
+    setProfile(null)
+    setMessages([])
+    setAuthEmail("")
+    setAuthPassword("")
+    setAuthName("")
+    setAuthError(null)
+  }, [])
+
+  const allPhrases = [...defaultPhrases, ...customPhrases]
+
+  useEffect(() => {
+    if (token) {
+      (async () => {
+        await loadUserFromToken()
+        await loadMessagesFromBackend()
+      })()
+    }
+  }, [token, loadUserFromToken, loadMessagesFromBackend])
 
   // Persistencia: guardar perfil en localStorage cuando cambia
   useEffect(() => {
@@ -455,17 +572,18 @@ export default function UniConnect() {
     const params = new URLSearchParams(window.location.search)
     const sharedText = params.get("share_text") || params.get("text") || params.get("share_title")
     if (sharedText) {
-      setInputText(sharedText.trim())
+      // Evitar setState síncrono dentro del efecto
+      setTimeout(() => setInputText(sharedText.trim()), 0)
       // Limpiar la URL para que no se repita en recargas
       window.history.replaceState({}, "", window.location.pathname)
-      toast.info(`Texto recibido: "${sharedText.trim().slice(0, 40)}${sharedText.length > 40 ? "…" : ""}"`, { duration: 4000 })
+      toast.info(`Texto recibido: ${sharedText.trim().slice(0, 40)}${sharedText.length > 40 ? "…" : ""}`, { duration: 4000 })
     }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Persistencia: guardar config en localStorage cuando cambia
   useEffect(() => {
     if (typeof window === "undefined") return
-    try { localStorage.setItem("uniconnect-config", JSON.stringify(config)) } catch {}
+    try { localStorage.setItem("uniconnect-config", JSON.stringify(config)) } catch { void 0 }
   }, [config])
 
   // Alto contraste: aplicar/quitar clase en <html> cuando cambia config.highContrast
@@ -486,7 +604,7 @@ export default function UniConnect() {
             if (!released) requestWakeLock() // re-adquirir si el sistema lo liberó
           })
         }
-      } catch { /* dispositivo no soporta WakeLock o está en background */ }
+      } catch { void 0 }
     }
 
     requestWakeLock()
@@ -504,9 +622,9 @@ export default function UniConnect() {
 
     const handleVisibilityChange = () => {
       if (document.hidden) {
-        // App en background: detener micrófono y TTS para ahorrar batería
-        try { recognitionRef.current?.abort() } catch {}
-        try { synthRef.current?.cancel() } catch {}
+      // App en background: detener micrófono y TTS para ahorrar batería
+      try { recognitionRef.current?.abort() } catch { void 0 }
+      try { synthRef.current?.cancel() } catch { void 0 }
         setIsListening(false)
         if (audioLevelRef.current) { clearInterval(audioLevelRef.current); audioLevelRef.current = null }
         setAudioLevel(0)
@@ -539,6 +657,14 @@ export default function UniConnect() {
       try { recognitionRef.current?.abort() } catch { /* ya estaba inactivo */ }
       try { synthRef.current?.cancel() } catch { /* ya estaba inactivo */ }
     }
+  }, [])
+
+  // Inicializar lastActivity después del montaje para evitar llamadas impuras en render
+  useEffect(() => {
+    if (typeof window === "undefined") return
+    const now = Date.now()
+    setTimeout(() => setLastActivity(now), 0)
+    lastActivityRef.current = now
   }, [])
 
   useEffect(() => {
@@ -589,65 +715,115 @@ export default function UniConnect() {
     speak("Pantalla activa")
   }, [vibrate, speak])
 
-  const sendMessage = useCallback((text: string, shouldVibrate: boolean = true) => {
+  const login = useCallback(async () => {
+    setAuthError(null)
+    try {
+      const response = await loginUser(authEmail.trim(), authPassword)
+      handleAuthSuccess(response)
+      const remoteMessages = await fetchMessages(response.access_token)
+      setMessages(remoteMessages.slice(-100).map(msg => ({
+        id: msg.id.toString(),
+        text: msg.content,
+        from: msg.type === "text" || msg.type === "phrase" ? "me" : "other",
+        time: new Date(msg.created_at),
+      })))
+    } catch (error: any) {
+      setAuthError(error?.data?.errors?.email?.[0] || error?.data?.message || "Error al iniciar sesión")
+    }
+  }, [authEmail, authPassword, handleAuthSuccess])
+
+  const register = useCallback(async () => {
+    setAuthError(null)
+    try {
+      if (!authName.trim()) {
+        setAuthError("El nombre es obligatorio")
+        return
+      }
+      const response = await registerUser(authName.trim(), authEmail.trim(), authPassword, authPassword)
+      handleAuthSuccess(response)
+      const remoteMessages = await fetchMessages(response.access_token)
+      setMessages(remoteMessages.slice(-100).map(msg => ({
+        id: msg.id.toString(),
+        text: msg.content,
+        from: msg.type === "text" || msg.type === "phrase" ? "me" : "other",
+        time: new Date(msg.created_at),
+      })))
+    } catch (error: any) {
+      setAuthError(error?.data?.errors?.email?.[0] || error?.data?.errors?.password?.[0] || error?.data?.message || "Error al registrar")
+    }
+  }, [authName, authEmail, authPassword, handleAuthSuccess])
+
+  const sendMessage = useCallback(async (text: string, shouldVibrate: boolean = true) => {
     if (!text.trim()) return
-    setMessages(prev => [...prev, { id: `msg-${Date.now()}-${Math.random()}`, text: text.trim(), from: "me", time: new Date() }])
     setInputText("")
     const now = Date.now()
     setLastActivity(now)
     lastActivityRef.current = now
+
+    const localMessage = {
+      id: `msg-${Date.now()}-${Math.random()}`,
+      text: text.trim(),
+      from: "me" as const,
+      time: new Date(),
+    }
+
+    setMessages(prev => [...prev, localMessage])
     if (shouldVibrate) vibrate([100])
     speak("Enviado")
     toast.success("Mensaje enviado", { duration: 3000 })
 
-    // ─── PUNTO DE EXTENSIÓN PARA BACKEND REAL ────────────────────────────────
-    // Reemplazar este setTimeout con una llamada WebSocket o fetch:
-    //
-    //   socket.emit("message", { text: text.trim(), roomId, senderId })
-    //
-    //   socket.on("message", (msg) => {
-    //     setMessages(prev => [...prev, { ...msg, time: new Date(msg.time) }])
-    //     // ... lógica de vibración/TTS según perfil
-    //   })
-    //
-    // El estado `messages` y `profile` ya persisten en localStorage,
-    // por lo que la reconexión recupera el contexto automáticamente.
-    // ─────────────────────────────────────────────────────────────────────────
-    setTimeout(() => {
-      const reply = "Recibido"
-      setMessages(prev => [...prev, { id: `msg-${Date.now()}-${Math.random()}`, text: reply, from: "other", time: new Date() }])
-      const now = Date.now()
-      setLastActivity(now)
-      lastActivityRef.current = now
-      toast.info(`Mensaje recibido: ${reply}`, { duration: 4000 })
+    if (!token) {
+      setTimeout(() => {
+        const reply = "Recibido"
+        setMessages(prev => [...prev, { id: `msg-${Date.now()}-${Math.random()}`, text: reply, from: "other", time: new Date() }])
+        const now2 = Date.now()
+        setLastActivity(now2)
+        lastActivityRef.current = now2
+        toast.info(`Mensaje recibido: ${reply}`, { duration: 4000 })
 
-      if (profile?.blind && profile?.deaf) {
-        const len = reply.length
-        if (len <= 4) {
-          vibrate([400])
-        } else if (len <= 15) {
+        if (profile?.blind && profile?.deaf) {
+          const len = reply.length
+          if (len <= 4) {
+            vibrate([400])
+          } else if (len <= 15) {
+            vibrate([200, 100, 200])
+          } else {
+            vibrate([150, 80, 150, 80, 150])
+          }
+          const morsePattern = textToMorse(reply, 3)
+          if (morsePattern.length > 0) {
+            const phase1Duration = (len <= 4 ? 400 : len <= 15 ? 500 : 630) + 500
+            setTimeout(() => navigator.vibrate?.(morsePattern), phase1Duration)
+          }
+        } else if (profile?.blind) {
           vibrate([200, 100, 200])
+          speak("Mensaje recibido: " + reply)
+        } else if (profile?.deaf) {
+          vibrate([80, 60, 80])
+          setNewMessageFlash(true)
+          setTimeout(() => setNewMessageFlash(false), 1200)
         } else {
-          vibrate([150, 80, 150, 80, 150])
+          vibrate([100])
+          speak(reply)
         }
-        const morsePattern = textToMorse(reply, 3)
-        if (morsePattern.length > 0) {
-          const phase1Duration = (len <= 4 ? 400 : len <= 15 ? 500 : 630) + 500
-          setTimeout(() => navigator.vibrate?.(morsePattern), phase1Duration)
-        }
-      } else if (profile?.blind) {
-        vibrate([200, 100, 200])
-        speak("Mensaje recibido: " + reply)
-      } else if (profile?.deaf) {
-        vibrate([80, 60, 80])
-        setNewMessageFlash(true)
-        setTimeout(() => setNewMessageFlash(false), 1200)
-      } else {
-        vibrate([100])
-        speak(reply)
-      }
-    }, 1000)
-  }, [profile, vibrate, speak])
+      }, 1000)
+      return
+    }
+
+    try {
+      const response = await postMessage(text.trim(), token)
+      setMessages(prev => prev.map(item => item.id === localMessage.id ? {
+        ...item,
+        id: response.id.toString(),
+        time: new Date(response.created_at),
+      } : item))
+      setBackendError(null)
+    } catch (error: any) {
+      console.error("Error sending message to backend:", error)
+      toast.error("No se pudo enviar el mensaje al backend.")
+      setBackendError("Error de conexión con el backend. Mensaje en modo offline.")
+    }
+  }, [profile, vibrate, speak, token])
 
   const toggleVoice = useCallback(() => {
     if (profileRef.current?.mute || !recognitionRef.current) return
@@ -723,10 +899,41 @@ export default function UniConnect() {
     }
   }, [isListening, profile, vibrate, speak, sendMessage])
 
-  const sendPhrase = useCallback((p: Phrase) => {
-    sendMessage(p.text, false) // false = no vibrar genérico
-    vibrate(p.vibration)
-  }, [sendMessage, vibrate])
+  const sendPhrase = useCallback(async (p: Phrase) => {
+    if (!token) {
+      sendMessage(p.text, false)
+      vibrate(p.vibration)
+      return
+    }
+
+    const localMessage = {
+      id: `msg-${Date.now()}-${Math.random()}`,
+      text: p.text,
+      from: "me" as const,
+      time: new Date(),
+    }
+    setMessages(prev => [...prev, localMessage])
+    setLastActivity(Date.now())
+    lastActivityRef.current = Date.now()
+    speak("Enviado")
+    toast.success("Frase enviada", { duration: 3000 })
+
+    try {
+      const response = await apiSendPhrase(p.id, token)
+      setMessages(prev => prev.map(item => item.id === localMessage.id ? {
+        ...item,
+        id: response.id.toString(),
+        time: new Date(response.created_at),
+      } : item))
+      vibrate(p.vibration)
+      setBackendError(null)
+    } catch (error: any) {
+      console.error("Error sending phrase to backend:", error)
+      toast.error("No se pudo enviar la frase al backend.")
+      setBackendError("Error de conexión con el backend para frases.")
+      vibrate(p.vibration)
+    }
+  }, [sendMessage, vibrate, token])
 
   const addCustomPhrase = useCallback(() => {
     const text = newPhraseText.trim()
@@ -747,13 +954,15 @@ export default function UniConnect() {
     setEmergencyDialogOpen(true)
   }, [vibrate, speak])
 
-  const confirmEmergency = useCallback(() => {
+  const confirmEmergency = useCallback(async () => {
     setEmergencyDialogOpen(false)
     vibrate([500, 200, 500, 200, 500])
     speak("Enviando emergencia")
-    toast.error("🆘 EMERGENCIA enviada — llamando al número de emergencias", {
-      duration: 6000,
-    })
+    setInputText("")
+    const now = Date.now()
+    setLastActivity(now)
+    lastActivityRef.current = now
+
     setMessages(prev => [...prev, {
       id: `msg-${Date.now()}`,
       text: "🆘 EMERGENCIA",
@@ -761,13 +970,94 @@ export default function UniConnect() {
       time: new Date(),
       isAlert: true,
     }])
-    setInputText("")
-    const now = Date.now()
-    setLastActivity(now)
-    lastActivityRef.current = now
+
+    if (!token) {
+      toast.error("🆘 EMERGENCIA enviada localmente — sin token backend", {
+        duration: 6000,
+      })
+      const emergencyNumber = process.env.NEXT_PUBLIC_EMERGENCY_NUMBER ?? "123"
+      window.location.href = `tel:${emergencyNumber}`
+      return
+    }
+
+    try {
+      await apiTriggerEmergency(token, { type: "technical", description: "Emergencia activada desde interfaz UniConnect" })
+      toast.error("🆘 Emergencia enviada al backend", {
+        duration: 6000,
+      })
+    } catch (error: any) {
+      console.error("Error triggering emergency in backend:", error)
+      toast.error("No se pudo enviar la emergencia al backend. Llamando al número local.", {
+        duration: 6000,
+      })
+    }
+
     const emergencyNumber = process.env.NEXT_PUBLIC_EMERGENCY_NUMBER ?? "123"
     window.location.href = `tel:${emergencyNumber}`
-  }, [vibrate, speak])
+  }, [vibrate, speak, token])
+
+  if (!token) {
+    return (
+      <main className="h-dvh bg-background flex flex-col justify-center items-center p-4">
+        <div className="w-full max-w-md rounded-3xl border border-border bg-card p-6 shadow-lg">
+          <div className="mb-4 text-center">
+            <h1 className="text-2xl sm:text-3xl font-bold">UniConnect</h1>
+            <p className="text-sm text-muted-foreground mt-2">Inicia sesión o crea una cuenta para conectar la interfaz con el backend.</p>
+          </div>
+
+          {authError && (
+            <Alert variant="destructive" className="mb-4">
+              <AlertTitle>Error</AlertTitle>
+              <p>{authError}</p>
+            </Alert>
+          )}
+
+          <div className="space-y-3">
+            {authMode === "register" && (
+              <Input
+                type="text"
+                autoComplete="name"
+                value={authName}
+                onChange={e => setAuthName(e.target.value)}
+                placeholder="Nombre"
+                aria-label="Nombre"
+              />
+            )}
+            <Input
+              type="email"
+              autoComplete="email"
+              value={authEmail}
+              onChange={e => setAuthEmail(e.target.value)}
+              placeholder="Correo electrónico"
+              aria-label="Correo electrónico"
+            />
+            <Input
+              type="password"
+              autoComplete={authMode === "login" ? "current-password" : "new-password"}
+              value={authPassword}
+              onChange={e => setAuthPassword(e.target.value)}
+              placeholder="Contraseña"
+              aria-label="Contraseña"
+            />
+            <div className="flex flex-col gap-2 sm:flex-row">
+              <Button type="button" className="flex-1" onClick={authMode === "login" ? login : register}>
+                {authMode === "login" ? "Iniciar sesión" : "Registrarse"}
+              </Button>
+              <Button type="button" variant="outline" className="flex-1" onClick={() => setAuthMode(authMode === "login" ? "register" : "login")}>
+                {authMode === "login" ? "Crear cuenta" : "Ya tengo cuenta"}
+              </Button>
+            </div>
+          </div>
+
+          <div className="mt-4 text-center text-xs text-muted-foreground">
+            {authMode === "login"
+              ? "Si todavía no tienes cuenta, regístrate para conectar con el backend."
+              : "Usa el mismo correo y contraseña para registrarte y luego acceder al sistema."}
+          </div>
+        </div>
+      </main>
+    )
+  }
 
   // SELECTOR DE PERFIL - Grid responsivo
   if (!profile) {
@@ -896,19 +1186,17 @@ export default function UniConnect() {
   // PANTALLA APAGADA
   if (screenOff) {
     return (
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-label="Pantalla en reposo. Toca para activar."
-        className="h-dvh bg-background fixed inset-0 z-50 flex items-center justify-center"
-        onClick={wake}
-        onTouchStart={wake}
-        onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") wake() }}
-        tabIndex={0}
-      >
-        <span className="sr-only">
-          Pantalla en reposo. Toca la pantalla o presiona Enter para activar.
-        </span>
+      <div role="dialog" aria-modal="true" aria-label="Pantalla en reposo" className="h-dvh bg-background fixed inset-0 z-50">
+        <button
+          type="button"
+          aria-label="Pantalla en reposo. Toca o presiona Enter para activar."
+          onClick={wake}
+          onTouchStart={wake}
+          onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") wake() }}
+          className="h-full w-full flex items-center justify-center bg-transparent border-0 p-0"
+        >
+          <span className="sr-only">Pantalla en reposo. Toca la pantalla o presiona Enter para activar.</span>
+        </button>
       </div>
     )
   }
@@ -927,7 +1215,7 @@ export default function UniConnect() {
         canSpeak={canSpeak}
         canHear={canHear}
         isListening={isListening}
-        allPhrases={[...PHRASES, ...customPhrases]}
+        allPhrases={allPhrases}
         onToggleVoice={toggleVoice}
         onSendPhrase={sendPhrase}
         onEmergency={triggerEmergency}
@@ -951,6 +1239,11 @@ export default function UniConnect() {
         </Button>
         <h1 className="sr-only">UniConnect</h1>
         <div className="flex items-center gap-1">
+          {user?.name && (
+            <span className="hidden sm:inline text-xs sm:text-sm text-muted-foreground" aria-label={`Usuario autenticado: ${user.name}`}>
+              Hola, {user.name}
+            </span>
+          )}
           <div className="flex gap-1" role="status" aria-label={`Perfil activo: ${[profile.deaf && "Sordo", profile.mute && "Mudo"].filter(Boolean).join(" y ") || "Normal"}`}>
             {profile.deaf && (
               <span className="bg-muted px-1.5 sm:px-2 py-0.5 rounded text-[10px] sm:text-xs" aria-label="Indicador de perfil: Sordo activo">Sordo</span>
@@ -959,6 +1252,9 @@ export default function UniConnect() {
               <span className="bg-muted px-1.5 sm:px-2 py-0.5 rounded text-[10px] sm:text-xs" aria-label="Indicador de perfil: Mudo activo">Mudo</span>
             )}
           </div>
+          <Button variant="ghost" size="sm" aria-label="Cerrar sesión" onClick={logout} className="h-7 sm:h-8 px-2 text-xs sm:text-sm">
+            Salir
+          </Button>
           <Button variant="ghost" size="sm" aria-label="Abrir configuración" onClick={() => setConfigDrawerOpen(true)} className="h-7 sm:h-8 px-2 text-base">
             ⚙
           </Button>
@@ -1055,7 +1351,7 @@ export default function UniConnect() {
         {/* Tab Frases: grid de frases + agregar personalizada */}
         <TabsContent value="frases" className="p-2 sm:p-3 space-y-2 mt-0">
           <div className="grid grid-cols-4 gap-1.5 sm:gap-2">
-            {PHRASES.map(p => (
+            {defaultPhrases.map(p => (
               <Button key={p.id} variant="outline" aria-label={`${p.text}. Patrón de vibración: ${p.vibration.join('-')} milisegundos`} onClick={() => sendPhrase(p)} className="h-9 sm:h-10 lg:h-12 text-[10px] sm:text-xs lg:text-sm px-1 flex flex-col gap-0.5">
                 {p.icon && <span aria-hidden="true" className="text-base leading-none">{p.icon}</span>}
                 <span>{p.text}</span>
@@ -1070,9 +1366,9 @@ export default function UniConnect() {
               + Frase
             </Button>
           </div>
-          {showAddPhrase && (
+            {showAddPhrase && (
             <form onSubmit={e => { e.preventDefault(); addCustomPhrase() }} aria-label="Agregar frase personalizada al banco de frases" className="flex gap-2">
-              <Input type="text" inputMode="text" autoComplete="off" value={newPhraseText} onChange={e => setNewPhraseText(e.target.value)} placeholder="Escribe la frase..." aria-label="Texto de la nueva frase" className="flex-1 h-9 sm:h-10 text-xs sm:text-sm" autoFocus />
+              <Input type="text" inputMode="text" autoComplete="off" value={newPhraseText} onChange={e => setNewPhraseText(e.target.value)} placeholder="Escribe la frase..." aria-label="Texto de la nueva frase" className="flex-1 h-9 sm:h-10 text-xs sm:text-sm" />
               <Button type="submit" disabled={!newPhraseText.trim()} aria-disabled={!newPhraseText.trim()} className="h-9 sm:h-10 text-xs sm:text-sm px-3">Guardar</Button>
               <Button type="button" variant="ghost" aria-label="Cancelar agregar frase" onClick={() => { setShowAddPhrase(false); setNewPhraseText("") }} className="h-9 sm:h-10 text-xs sm:text-sm px-3">✕</Button>
             </form>
@@ -1115,7 +1411,7 @@ export default function UniConnect() {
             {/* Velocidad TTS */}
             {config.ttsEnabled && (
               <div className="space-y-2">
-                <label className="text-sm font-medium">Velocidad de voz: {config.ttsRate.toFixed(1)}×</label>
+                <div className="text-sm font-medium">Velocidad de voz: {config.ttsRate.toFixed(1)}×</div>
                 <Slider
                   min={0.5} max={2} step={0.1}
                   value={[config.ttsRate]}
@@ -1130,7 +1426,7 @@ export default function UniConnect() {
             {/* Idioma TTS */}
             {config.ttsEnabled && (
               <div className="space-y-2">
-                <label className="text-sm font-medium">Idioma de voz</label>
+                <div className="text-sm font-medium">Idioma de voz</div>
                 <Select value={config.ttsLang} onValueChange={v => setConfig(c => ({ ...c, ttsLang: v }))}>
                   <SelectTrigger aria-label="Seleccionar idioma de síntesis de voz" className="w-full">
                     <SelectValue />
@@ -1169,7 +1465,7 @@ export default function UniConnect() {
           <AlertDialogHeader>
             <AlertDialogTitle>¿Enviar alerta de emergencia?</AlertDialogTitle>
             <AlertDialogDescription>
-              Se enviará el mensaje "🆘 EMERGENCIA" y se llamará al número de emergencias. Esta acción no se puede deshacer.
+              Se enviará el mensaje &quot;🆘 EMERGENCIA&quot; y se llamará al número de emergencias. Esta acción no se puede deshacer.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
