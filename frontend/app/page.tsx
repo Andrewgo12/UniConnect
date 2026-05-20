@@ -8,6 +8,7 @@ import {
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import { Label } from "@/components/ui/label"
 import { Progress } from "@/components/ui/progress"
 import { Switch } from "@/components/ui/switch"
 import { Slider } from "@/components/ui/slider"
@@ -217,6 +218,8 @@ type BlindInterfaceProps = {
   vibrate: (pattern: number[]) => void
   speak: (text: string, cancel?: boolean) => void
   emergencyDialogOpen: boolean
+  guestMode: boolean
+  guestSecondsLeft: number
   setEmergencyDialogOpen: (v: boolean) => void
   confirmEmergency: () => void
 }
@@ -225,6 +228,7 @@ function BlindInterface({
   profile, canSpeak, canHear, isListening, allPhrases,
   onToggleVoice, onSendPhrase, onEmergency, onChangeProfile,
   vibrate, speak, emergencyDialogOpen, setEmergencyDialogOpen, confirmEmergency,
+  guestMode, guestSecondsLeft,
 }: BlindInterfaceProps) {
   const announcedRef = useRef(false)
 
@@ -245,7 +249,13 @@ function BlindInterface({
   }, [profile]) // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
-    <main className="h-dvh flex flex-col bg-background text-foreground p-3 sm:p-4 gap-2 sm:gap-3">
+    <main role="application" aria-label="Interfaz para usuario ciego" className="h-dvh flex flex-col bg-background text-foreground p-3 sm:p-4 gap-2 sm:gap-3">
+      {guestMode && (
+        <div className="rounded-2xl border border-primary/30 bg-primary/10 px-4 py-3 text-sm text-primary-foreground" role="status" aria-live="polite">
+          <p className="font-semibold">Modo invitado activo</p>
+          <p>{guestSecondsLeft > 0 ? `Tiempo restante: ${Math.floor(guestSecondsLeft / 60)}:${String(guestSecondsLeft % 60).padStart(2, '0')}` : 'Finalizando...'}</p>
+        </div>
+      )}
       <Button
         variant="ghost"
         aria-label="Cambiar perfil de accesibilidad"
@@ -383,6 +393,9 @@ export default function UniConnect() {
   const [authPassword, setAuthPassword] = useState("")
   const [authError, setAuthError] = useState<string | null>(null)
   const [_isAuthLoading, _setIsAuthLoading] = useState(false)
+  const [guestMode, setGuestMode] = useState(false)
+  const [guestExpiresAt, setGuestExpiresAt] = useState<number | null>(null)
+  const [guestSecondsLeft, setGuestSecondsLeft] = useState(0)
   const [inputText, setInputText] = useState("")
   const [isListening, setIsListening] = useState(false)
   const [emergencyDialogOpen, setEmergencyDialogOpen] = useState(false)
@@ -403,6 +416,13 @@ export default function UniConnect() {
   const [micError, setMicError] = useState<string | null>(null)
   const [audioLevel, setAudioLevel] = useState(0)
   const audioLevelRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const guestTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const videoRef = useRef<HTMLVideoElement | null>(null)
+  const cameraStreamRef = useRef<MediaStream | null>(null)
+  const [cameraActive, setCameraActive] = useState(false)
+  const [cameraError, setCameraError] = useState<string | null>(null)
+  const [isRecording, setIsRecording] = useState(false)
+  const recordedBlobRef = useRef<Blob | null>(null)
 
   // Config persistida: TTS, vibración, alto contraste, velocidad TTS, idioma TTS
   const [config, setConfig] = useState<{
@@ -453,7 +473,39 @@ export default function UniConnect() {
     return () => { active = false }
   }, [])
 
+  const endGuestMode = useCallback(() => {
+    setGuestMode(false)
+    setGuestExpiresAt(null)
+    setGuestSecondsLeft(0)
+    setProfile(null)
+    setMessages([])
+    setAuthError(null)
+    toast("Modo invitado finalizado. Inicia sesión para continuar.", { duration: 5000 })
+    if (guestTimerRef.current) {
+      clearInterval(guestTimerRef.current)
+      guestTimerRef.current = null
+    }
+  }, [])
+
+  const enterGuestMode = useCallback(() => {
+    const guestModeMs = 2 * 60 * 1000
+    const expiresAt = Date.now() + guestModeMs
+    setGuestMode(true)
+    setGuestExpiresAt(expiresAt)
+    setGuestSecondsLeft(Math.ceil(guestModeMs / 1000))
+    setAuthError(null)
+    toast.success("Modo invitado activo. Puedes hablar por tiempo limitado.", { duration: 4000 })
+  }, [])
+
   const handleAuthSuccess = useCallback((auth: { access_token: string; user: ApiUser }) => {
+    setGuestMode(false)
+    setGuestExpiresAt(null)
+    setGuestSecondsLeft(0)
+    if (guestTimerRef.current) {
+      clearInterval(guestTimerRef.current)
+      guestTimerRef.current = null
+    }
+
     setToken(auth.access_token)
     localStorage.setItem("uniconnect-token", auth.access_token)
     setUser(auth.user)
@@ -531,6 +583,27 @@ export default function UniConnect() {
       })()
     }
   }, [token, loadUserFromToken, loadMessagesFromBackend])
+
+  useEffect(() => {
+    if (!guestMode || !guestExpiresAt) return
+
+    const updateCountdown = () => {
+      const remaining = Math.max(0, Math.ceil((guestExpiresAt - Date.now()) / 1000))
+      setGuestSecondsLeft(remaining)
+      if (remaining <= 0) {
+        endGuestMode()
+      }
+    }
+
+    updateCountdown()
+    guestTimerRef.current = setInterval(updateCountdown, 1000)
+    return () => {
+      if (guestTimerRef.current) {
+        clearInterval(guestTimerRef.current)
+        guestTimerRef.current = null
+      }
+    }
+  }, [guestMode, guestExpiresAt, endGuestMode])
 
   // Persistencia: guardar perfil en localStorage cuando cambia
   useEffect(() => {
@@ -659,6 +732,184 @@ export default function UniConnect() {
     }
   }, [])
 
+  const speak = useCallback((text: string, cancel: boolean = true) => {
+    if (!config.ttsEnabled || profile?.deaf) return
+    if (!synthRef.current) return
+    try {
+      if (cancel) synthRef.current.cancel()
+      const u = new SpeechSynthesisUtterance(text)
+      u.lang = config.ttsLang
+      u.rate = config.ttsRate
+      u.onerror = () => { /* TTS falló — vibración es el canal de respaldo */ }
+      u.onend = () => { /* TTS completado exitosamente */ }
+      synthRef.current.speak(u)
+    } catch { /* Fallo silencioso */ }
+  }, [profile, config.ttsEnabled, config.ttsLang, config.ttsRate])
+
+  const stopCamera = useCallback(() => {
+    cameraStreamRef.current?.getTracks().forEach(track => track.stop())
+    cameraStreamRef.current = null
+    if (videoRef.current) {
+      videoRef.current.srcObject = null
+    }
+    setCameraActive(false)
+  }, [])
+
+  const startCamera = useCallback(async () => {
+    if (cameraActive) return
+    if (typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia) {
+      const msg = "Tu navegador no soporta cámara."
+      setCameraError(msg)
+      speak(msg)
+      return
+    }
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" }, audio: false })
+      cameraStreamRef.current = stream
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream
+        void videoRef.current.play().catch(() => {})
+      }
+      setCameraActive(true)
+      setCameraError(null)
+      speak("Cámara activada. Muestra tu lenguaje de señas frente al lente.")
+    } catch (error: unknown) {
+      let msg = "No se pudo activar la cámara."
+      if (error instanceof DOMException) {
+        if (error.name === "NotAllowedError" || error.name === "PermissionDeniedError") {
+          msg = "Permiso de cámara denegado."
+        } else if (error.name === "NotFoundError" || error.name === "DevicesNotFoundError") {
+          msg = "No se encontró una cámara disponible."
+        }
+      }
+      setCameraError(msg)
+      speak(msg)
+      toast.error(msg)
+    }
+  }, [cameraActive, speak])
+
+  const toggleCamera = useCallback(() => {
+    if (cameraActive) {
+      stopCamera()
+      speak("Cámara detenida")
+      return
+    }
+
+    void startCamera()
+  }, [cameraActive, startCamera, stopCamera, speak])
+
+  // Grabar un clip corto desde la cámara y retornar el Blob
+  const recordClip = useCallback((durationMs: number = 3000): Promise<Blob> => {
+    return new Promise<Blob>((resolve, reject) => {
+      if (!cameraStreamRef.current) return reject(new Error('No camera stream'))
+      try {
+        const options: MediaRecorderOptions = { mimeType: 'video/webm;codecs=vp8' }
+        // @ts-expect-error some browsers tienen MediaRecorder types distintos
+        const mr = new MediaRecorder(cameraStreamRef.current, options)
+        const chunks: Blob[] = []
+        mr.ondataavailable = (ev: BlobEvent) => { if (ev.data && ev.data.size > 0) chunks.push(ev.data) }
+        mr.onerror = (e) => reject(e)
+        mr.onstop = () => {
+          const blob = new Blob(chunks, { type: 'video/webm' })
+          recordedBlobRef.current = blob
+          resolve(blob)
+        }
+
+        mr.start()
+        setIsRecording(true)
+        setTimeout(() => {
+          try { mr.stop() } catch { /* ignore */ }
+          setIsRecording(false)
+        }, durationMs)
+      } catch (e) {
+        reject(e)
+      }
+    })
+  }, [])
+
+  // Subir clip al backend como Sign Language (requiere token). Devuelve el recurso creado o null.
+  const uploadSignLanguageClip = useCallback(async (blob: Blob) => {
+    if (!token) {
+      speak('Debes iniciar sesión para enviar video al backend')
+      return null
+    }
+
+    const fd = new FormData()
+    fd.append('file', new File([blob], 'sign_capture.webm', { type: blob.type }))
+    fd.append('title', 'Captura en vivo')
+    fd.append('category', 'custom')
+    fd.append('difficulty_level', 'beginner')
+    fd.append('region', 'colombian')
+    fd.append('language', config.ttsLang || 'es-CO')
+
+    try {
+      const res = await fetch('/api/v1/sign-languages', {
+        method: 'POST',
+        body: fd,
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data?.message || 'Upload failed')
+      // MediaUploadService devuelve { success: true, data: signLanguage }
+      return data?.data ?? data
+    } catch (e) {
+      console.error('Error uploading sign language clip:', e)
+      speak('No se pudo subir el video. Intenta de nuevo más tarde.')
+      return null
+    }
+  }, [token, config.ttsLang, speak])
+
+  // Polling para esperar transcript en el recurso sign-language
+  const waitForTranscript = useCallback(async (id: number | string, timeoutMs = 30000) => {
+    const start = Date.now()
+    const poll = async (): Promise<string | null> => {
+      try {
+        const res = await fetch(`/api/v1/sign-languages/${id}`)
+        if (!res.ok) return null
+        const data = await res.json()
+        const transcript = data?.transcript ?? data?.data?.transcript ?? null
+        if (transcript) return transcript
+      } catch { /* ignore */ }
+      if (Date.now() - start > timeoutMs) return null
+      await new Promise(r => setTimeout(r, 2000))
+      return poll()
+    }
+    return poll()
+  }, [])
+
+  const captureAndTranslate = useCallback(async () => {
+    if (!cameraActive) { speak('Activa la cámara primero'); return }
+    try {
+      speak('Grabando señal')
+      const blob = await recordClip(3000)
+      speak('Subiendo video para traducción')
+      const resource = await uploadSignLanguageClip(blob)
+      if (!resource) return
+      const id = resource.id ?? resource.data?.id
+      if (!id) { speak('No se obtuvo referencia del video en el servidor'); return }
+      speak('Esperando transcripción')
+      const transcript = await waitForTranscript(id, 45000)
+      if (!transcript) {
+        speak('No se encontró transcripción a tiempo')
+        return
+      }
+      // Insertar mensaje y reproducir audio
+      setMessages(prev => [...prev, { id: `sign-${Date.now()}`, text: transcript, from: 'other', time: new Date() }])
+      speak(transcript)
+      toast.success('Transcripción recibida')
+    } catch (e) {
+      console.error(e)
+      speak('Error en la captura o traducción')
+    }
+  }, [cameraActive, recordClip, uploadSignLanguageClip, waitForTranscript, speak])
+
+  useEffect(() => {
+    return () => {
+      stopCamera()
+    }
+  }, [stopCamera])
+
   // Inicializar lastActivity después del montaje para evitar llamadas impuras en render
   useEffect(() => {
     if (typeof window === "undefined") return
@@ -691,20 +942,6 @@ export default function UniConnect() {
     setVibrateFlash(true)
     setTimeout(() => setVibrateFlash(false), pattern.reduce((a, b) => a + b, 0) + 100)
   }, [config.vibrationEnabled, isMobile])
-
-  const speak = useCallback((text: string, cancel: boolean = true) => {
-    if (!config.ttsEnabled || profile?.deaf) return
-    if (!synthRef.current) return
-    try {
-      if (cancel) synthRef.current.cancel()
-      const u = new SpeechSynthesisUtterance(text)
-      u.lang = config.ttsLang
-      u.rate = config.ttsRate
-      u.onerror = () => { /* TTS falló — vibración es el canal de respaldo */ }
-      u.onend = () => { /* TTS completado exitosamente */ }
-      synthRef.current.speak(u)
-    } catch { /* Fallo silencioso */ }
-  }, [profile, config.ttsEnabled, config.ttsLang, config.ttsRate])
 
   const wake = useCallback(() => {
     setScreenOff(false)
@@ -951,9 +1188,9 @@ export default function UniConnect() {
   }, [newPhraseText, vibrate])
 
   const triggerEmergency = useCallback(() => {
-    vibrate([300, 100, 300])
-    speak("¿Confirmar emergencia?")
-    setEmergencyDialogOpen(true)
+    vibrate([300, 100, 300]);
+    speak("¿Confirmar emergencia?");
+    setEmergencyDialogOpen(true);
   }, [vibrate, speak])
 
   const confirmEmergency = useCallback(async () => {
@@ -998,12 +1235,15 @@ export default function UniConnect() {
     window.location.href = `tel:${emergencyNumber}`
   }, [vibrate, speak, token])
 
-  if (!token) {
+  if (!token && !guestMode) {
     return (
-      <main className="h-dvh bg-background flex flex-col justify-center items-center p-4">
+      <main role="main" aria-label="Pantalla de autenticación UniConnect" className="h-dvh bg-background flex flex-col justify-center items-center p-4">
+        <div className="sr-only" role="status" aria-live="polite">
+          Pantalla de inicio de sesión. Ingresa correo y contraseña, o selecciona crear cuenta. También puedes usar el modo invitado para hablar sin iniciar sesión.
+        </div>
         <div className="w-full max-w-md rounded-3xl border border-border bg-card p-6 shadow-lg">
           <div className="mb-4 text-center">
-            <h1 className="text-2xl sm:text-3xl font-bold">UniConnect</h1>
+            <h1 id="auth-form-heading" className="text-2xl sm:text-3xl font-bold">UniConnect</h1>
             <p className="text-sm text-muted-foreground mt-2">Inicia sesión o crea una cuenta para conectar la interfaz con el backend.</p>
           </div>
 
@@ -1014,47 +1254,80 @@ export default function UniConnect() {
             </Alert>
           )}
 
-          <div className="space-y-3">
-            {authMode === "register" && (
+          <form
+            onSubmit={e => {
+              e.preventDefault()
+              if (authMode === "login") {
+                void login()
+              } else {
+                void register()
+              }
+            }}
+            aria-labelledby="auth-form-heading"
+            className="space-y-3"
+          >
+            <div>
+              <Label htmlFor="auth-email" className="sr-only">Correo electrónico</Label>
               <Input
-                type="text"
-                autoComplete="name"
-                value={authName}
-                onChange={e => setAuthName(e.target.value)}
-                placeholder="Nombre"
-                aria-label="Nombre"
+                id="auth-email"
+                type="email"
+                autoComplete="email"
+                value={authEmail}
+                onChange={e => setAuthEmail(e.target.value)}
+                placeholder="Correo electrónico"
+                aria-describedby="auth-email-help"
               />
+              <p id="auth-email-help" className="sr-only">Ingresa el correo electrónico de tu cuenta</p>
+            </div>
+            {authMode === "register" && (
+              <div>
+                <Label htmlFor="auth-name" className="sr-only">Nombre</Label>
+                <Input
+                  id="auth-name"
+                  type="text"
+                  autoComplete="name"
+                  value={authName}
+                  onChange={e => setAuthName(e.target.value)}
+                  placeholder="Nombre"
+                  aria-describedby="auth-name-help"
+                />
+                <p id="auth-name-help" className="sr-only">Ingresa tu nombre completo</p>
+              </div>
             )}
-            <Input
-              type="email"
-              autoComplete="email"
-              value={authEmail}
-              onChange={e => setAuthEmail(e.target.value)}
-              placeholder="Correo electrónico"
-              aria-label="Correo electrónico"
-            />
-            <Input
-              type="password"
-              autoComplete={authMode === "login" ? "current-password" : "new-password"}
-              value={authPassword}
-              onChange={e => setAuthPassword(e.target.value)}
-              placeholder="Contraseña"
-              aria-label="Contraseña"
-            />
+            <div>
+              <Label htmlFor="auth-password" className="sr-only">Contraseña</Label>
+              <Input
+                id="auth-password"
+                type="password"
+                autoComplete={authMode === "login" ? "current-password" : "new-password"}
+                value={authPassword}
+                onChange={e => setAuthPassword(e.target.value)}
+                placeholder="Contraseña"
+                aria-describedby="auth-password-help"
+              />
+              <p id="auth-password-help" className="sr-only">Ingresa tu contraseña</p>
+            </div>
             <div className="flex flex-col gap-2 sm:flex-row">
-              <Button type="button" className="flex-1" onClick={authMode === "login" ? login : register}>
+              <Button type="submit" className="flex-1">
                 {authMode === "login" ? "Iniciar sesión" : "Registrarse"}
               </Button>
-              <Button type="button" variant="outline" className="flex-1" onClick={() => setAuthMode(authMode === "login" ? "register" : "login")}>
+              <Button type="button" variant="outline" className="flex-1" onClick={() => setAuthMode(authMode === "login" ? "register" : "login") }>
                 {authMode === "login" ? "Crear cuenta" : "Ya tengo cuenta"}
               </Button>
             </div>
-          </div>
+          </form>
 
-          <div className="mt-4 text-center text-xs text-muted-foreground">
+          <div className="mt-4 text-center text-xs text-muted-foreground" role="status" aria-live="polite">
             {authMode === "login"
               ? "Si todavía no tienes cuenta, regístrate para conectar con el backend."
               : "Usa el mismo correo y contraseña para registrarte y luego acceder al sistema."}
+          </div>
+
+          <div className="mt-6 text-center">
+            <p className="text-sm text-foreground mb-2">¿No quieres iniciar sesión? Usa UniConnect como invitado por tiempo limitado.</p>
+            <Button type="button" variant="outline" className="w-full" onClick={enterGuestMode}>
+              Hablar sin iniciar sesión
+            </Button>
           </div>
         </div>
       </main>
@@ -1206,6 +1479,7 @@ export default function UniConnect() {
   const canSee = !profile.blind
   const canHear = !profile.deaf
   const canSpeak = !profile.mute
+  const canUseCamera = profile.deaf || profile.mute
 
   // INTERFAZ PARA CIEGO
   if (!canSee) {
@@ -1227,13 +1501,18 @@ export default function UniConnect() {
         emergencyDialogOpen={emergencyDialogOpen}
         setEmergencyDialogOpen={setEmergencyDialogOpen}
         confirmEmergency={confirmEmergency}
+        guestMode={guestMode}
+        guestSecondsLeft={guestSecondsLeft}
       />
     )
   }
 
   // INTERFAZ VISUAL
   return (
-    <main className="h-dvh flex flex-col bg-background overflow-hidden">
+    <main role="main" aria-label="Interfaz principal UniConnect" className="h-dvh flex flex-col bg-background overflow-hidden">
+      <div className="sr-only" role="status" aria-live="polite">
+        Interfaz principal. Historial de mensajes, panel de chat y configuraciones. Usa el panel de pestañas para cambiar entre chat, frases y configuración.
+      </div>
       {/* Header compacto */}
       <header className="flex items-center justify-between px-2 py-1.5 sm:px-3 sm:py-2 border-b border-border shrink-0">
         <Button variant="ghost" size="sm" aria-label="Cambiar perfil de accesibilidad" onClick={() => { vibrate([60]); setProfile(null) }} className="h-7 sm:h-8 text-xs sm:text-sm px-2">
@@ -1306,7 +1585,10 @@ export default function UniConnect() {
         </TabsList>
 
         {/* Tab Chat: voz + emergencia + input */}
-        <TabsContent value="chat" className="p-2 sm:p-3 space-y-2 mt-0">
+        <TabsContent value="chat" className="p-2 sm:p-3 space-y-2 mt-0" aria-label="Panel de chat principal">
+          <div className="sr-only" role="status" aria-live="polite">
+            Panel de chat. Botón para activar o detener reconocimiento de voz, botón de emergencia y formulario de envío de mensajes.
+          </div>
           {/* Progress bar de nivel de audio — visible solo mientras escucha */}
           {isListening && (
             <Progress
@@ -1334,6 +1616,57 @@ export default function UniConnect() {
               EMERGENCIA
             </Button>
           </div>
+
+          {canUseCamera && (
+            <div className="rounded-2xl border border-border bg-card p-3 space-y-3">
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                <div>
+                  <p className="text-sm font-semibold">Cámara para lenguaje de señas</p>
+                  <p className="text-xs text-muted-foreground">Usa esta cámara si eres sordo, mudo o usas señas para comunicarte.</p>
+                </div>
+                <Button
+                  type="button"
+                  aria-label={cameraActive ? "Detener cámara de señas" : "Iniciar cámara de señas"}
+                  aria-pressed={cameraActive}
+                  onClick={toggleCamera}
+                  className={`h-11 sm:h-12 lg:h-14 text-sm sm:text-base ${cameraActive ? "bg-destructive hover:bg-destructive/90" : "bg-primary hover:bg-primary/90"}`}
+                >
+                  {cameraActive ? "Detener cámara" : "Iniciar cámara"}
+                </Button>
+              </div>
+              {cameraError && (
+                <Alert variant="destructive" className="p-2">
+                  <AlertTitle>Error de cámara</AlertTitle>
+                  <AlertDescription>{cameraError}</AlertDescription>
+                </Alert>
+              )}
+              <div className="rounded-2xl overflow-hidden bg-black">
+                <video
+                  ref={videoRef}
+                  className="w-full aspect-video bg-black"
+                  autoPlay
+                  muted
+                  playsInline
+                  aria-label="Vista previa de cámara para lenguaje de señas"
+                />
+              </div>
+              <div className="flex gap-2 mt-2">
+                <Button
+                  onClick={captureAndTranslate}
+                  disabled={!cameraActive || isRecording}
+                  aria-disabled={!cameraActive || isRecording}
+                  className="flex-1"
+                >
+                  {isRecording ? 'Grabando...' : 'Capturar y traducir'}
+                </Button>
+                <Button onClick={() => { recordedBlobRef.current = null; speak('Captura cancelada') }} variant="ghost" className="w-36">
+                  Cancelar
+                </Button>
+              </div>
+              <p className="text-xs text-muted-foreground">Coloca la cámara frente a tu rostro y manos. No se capta audio, solo video de señas.</p>
+            </div>
+          )}
+
           <form onSubmit={e => { e.preventDefault(); sendMessage(inputText) }} aria-label="Formulario para escribir y enviar un mensaje" className="flex gap-2">
             <Input
               type="text" inputMode="text" autoComplete="off" autoCorrect="off"
@@ -1351,7 +1684,10 @@ export default function UniConnect() {
         </TabsContent>
 
         {/* Tab Frases: grid de frases + agregar personalizada */}
-        <TabsContent value="frases" className="p-2 sm:p-3 space-y-2 mt-0">
+        <TabsContent value="frases" className="p-2 sm:p-3 space-y-2 mt-0" aria-label="Panel de frases rápidas">
+          <div className="sr-only" role="status" aria-live="polite">
+            Panel de frases rápidas. Selecciona una frase para enviar, o agrega una nueva frase personalizada.
+          </div>
           <div className="grid grid-cols-4 gap-1.5 sm:gap-2">
             {defaultPhrases.map(p => (
               <Button key={p.id} variant="outline" aria-label={`${p.text}. Patrón de vibración: ${p.vibration.join('-')} milisegundos`} onClick={() => sendPhrase(p)} className="h-9 sm:h-10 lg:h-12 text-[10px] sm:text-xs lg:text-sm px-1 flex flex-col gap-0.5">
@@ -1378,7 +1714,10 @@ export default function UniConnect() {
         </TabsContent>
 
         {/* Tab Config: acceso rápido a switches + botón para abrir Drawer completo */}
-        <TabsContent value="config" className="p-2 sm:p-3 space-y-3 mt-0">
+        <TabsContent value="config" className="p-2 sm:p-3 space-y-3 mt-0" aria-label="Panel de configuración rápida">
+          <div className="sr-only" role="status" aria-live="polite">
+            Panel de configuración. Activa o desactiva voz, vibración y alto contraste. Puedes abrir opciones completas.
+          </div>
           <div className="flex items-center justify-between">
             <label htmlFor="tts-quick" className="text-sm">Voz (TTS)</label>
             <Switch id="tts-quick" checked={config.ttsEnabled} onCheckedChange={v => setConfig(c => ({ ...c, ttsEnabled: v }))} aria-label="Activar o desactivar síntesis de voz" />
