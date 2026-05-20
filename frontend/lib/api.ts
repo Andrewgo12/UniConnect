@@ -29,9 +29,9 @@ async function apiFetch<T>(path: string, options: RequestInit = {}, token?: stri
 
   const data = await parseJson(response)
   if (!response.ok) {
-    const error = new Error(data?.message || `Request failed with status ${response.status}`)
-    ;(error as any).status = response.status
-    ;(error as any).data = data
+    const error = new Error(data?.message || `Request failed with status ${response.status}`) as Error & { status?: number; data?: unknown }
+    error.status = response.status
+    error.data = data
     throw error
   }
 
@@ -116,8 +116,8 @@ export function sendPhrase(phrase_id: number, token: string) {
   }, token)
 }
 
-export function triggerEmergency(token: string, data: Record<string, any>) {
-  return apiFetch<{ emergency: any; message: string }>("/api/v1/emergencies/trigger", {
+export function triggerEmergency(token: string, data: Record<string, unknown>) {
+  return apiFetch<{ emergency: unknown; message: string }>("/api/v1/emergencies/trigger", {
     method: "POST",
     body: JSON.stringify(data),
   }, token)

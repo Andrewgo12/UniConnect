@@ -18,7 +18,7 @@ import {
   DrawerFooter, DrawerHeader, DrawerTitle,
 } from "@/components/ui/drawer"
 import { textToMorse } from "@/lib/morse"
-import { loginUser, registerUser, fetchMe, fetchMessages, postMessage, sendPhrase as apiSendPhrase, triggerEmergency as apiTriggerEmergency, fetchDefaultPhrases, ApiUser, ApiPhrase, ProfileSettings } from "@/lib/api"
+import { loginUser, registerUser, fetchMe, fetchMessages, postMessage, sendPhrase as apiSendPhrase, triggerEmergency as apiTriggerEmergency, fetchDefaultPhrases, ApiUser, ApiPhrase } from "@/lib/api"
 import { toast } from "sonner"
 import { useIsMobile } from "@/hooks/use-mobile"
 
@@ -26,7 +26,7 @@ type Profile = { blind: boolean; deaf: boolean; mute: boolean }
 
 type AuthMode = "login" | "register"
 
-type ApiMessage = { id: string | number; content: string; type: string; created_at: string }
+type _ApiMessage = { id: string | number; content: string; type: string; created_at: string }
 
 const PHRASES = [
   { id: 1, text: "Sí", icon: "✓", vibration: [100] },
@@ -382,7 +382,7 @@ export default function UniConnect() {
   const [authEmail, setAuthEmail] = useState("")
   const [authPassword, setAuthPassword] = useState("")
   const [authError, setAuthError] = useState<string | null>(null)
-  const [isAuthLoading, setIsAuthLoading] = useState(false)
+  const [_isAuthLoading, _setIsAuthLoading] = useState(false)
   const [inputText, setInputText] = useState("")
   const [isListening, setIsListening] = useState(false)
   const [emergencyDialogOpen, setEmergencyDialogOpen] = useState(false)
@@ -419,19 +419,19 @@ export default function UniConnect() {
     } catch { return { ttsEnabled: true, vibrationEnabled: true, highContrast: false, ttsRate: 0.9, ttsLang: "es-CO" } }
   })
   
-  const [lastActivity, setLastActivity] = useState<number>(() => 0)
-  const [vibrateFlash, setVibrateFlash] = useState(false)
-  const [unreadCount, setUnreadCount] = useState(0)
+  const [_lastActivity, setLastActivity] = useState<number>(() => 0)
+  const [_vibrateFlash, setVibrateFlash] = useState(false)
+  const [_unreadCount, _setUnreadCount] = useState(0)
   const lastActivityRef = useRef<number>(0)
   const profileRef = useRef(profile)
   const recognitionRef = useRef<SpeechRecognition | null>(null)
   const synthRef = useRef<SpeechSynthesis | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const wakeLockRef = useRef<WakeLockSentinel | null>(null)
-  const analyserRef = useRef<AnalyserNode | null>(null)
-  const audioContextRef = useRef<AudioContext | null>(null)
-  const animFrameRef = useRef<number | null>(null)
-  const [backendError, setBackendError] = useState<string | null>(null)
+  const _analyserRef = useRef<AnalyserNode | null>(null)
+  const _audioContextRef = useRef<AudioContext | null>(null)
+  const _animFrameRef = useRef<number | null>(null)
+  const [_backendError, setBackendError] = useState<string | null>(null)
 
   useEffect(() => {
     let active = true
@@ -482,7 +482,7 @@ export default function UniConnect() {
         mute: profileSettings?.mute ?? authUser.profile.mute ?? false,
       })
       setBackendError(null)
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error("Error loading user:", error)
       setAuthError("No se pudo cargar el usuario. Inicia sesión nuevamente.")
       setToken(null)
@@ -503,7 +503,7 @@ export default function UniConnect() {
         time: new Date(msg.created_at),
       })))
       setBackendError(null)
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.warn("No se pudieron cargar los mensajes:", error)
       setBackendError("No se pudieron cargar los mensajes del backend.")
     }
@@ -578,7 +578,7 @@ export default function UniConnect() {
       window.history.replaceState({}, "", window.location.pathname)
       toast.info(`Texto recibido: ${sharedText.trim().slice(0, 40)}${sharedText.length > 40 ? "…" : ""}`, { duration: 4000 })
     }
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [])
 
   // Persistencia: guardar config en localStorage cuando cambia
   useEffect(() => {
@@ -727,8 +727,9 @@ export default function UniConnect() {
         from: msg.type === "text" || msg.type === "phrase" ? "me" : "other",
         time: new Date(msg.created_at),
       })))
-    } catch (error: any) {
-      setAuthError(error?.data?.errors?.email?.[0] || error?.data?.message || "Error al iniciar sesión")
+    } catch (error: unknown) {
+      const err = error as { data?: { errors?: { email?: string[] }; message?: string } } | undefined
+      setAuthError(err?.data?.errors?.email?.[0] || err?.data?.message || "Error al iniciar sesión")
     }
   }, [authEmail, authPassword, handleAuthSuccess])
 
@@ -748,8 +749,9 @@ export default function UniConnect() {
         from: msg.type === "text" || msg.type === "phrase" ? "me" : "other",
         time: new Date(msg.created_at),
       })))
-    } catch (error: any) {
-      setAuthError(error?.data?.errors?.email?.[0] || error?.data?.errors?.password?.[0] || error?.data?.message || "Error al registrar")
+    } catch (error: unknown) {
+      const err = error as { data?: { errors?: { email?: string[]; password?: string[] }; message?: string } } | undefined
+      setAuthError(err?.data?.errors?.email?.[0] || err?.data?.errors?.password?.[0] || err?.data?.message || "Error al registrar")
     }
   }, [authName, authEmail, authPassword, handleAuthSuccess])
 
@@ -818,7 +820,7 @@ export default function UniConnect() {
         time: new Date(response.created_at),
       } : item))
       setBackendError(null)
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error("Error sending message to backend:", error)
       toast.error("No se pudo enviar el mensaje al backend.")
       setBackendError("Error de conexión con el backend. Mensaje en modo offline.")
@@ -851,17 +853,17 @@ export default function UniConnect() {
       if (text) sendMessage(text)
     }
 
-    recognition.onerror = (e: SpeechRecognitionErrorEvent) => {
+    recognition.onerror = (_e: SpeechRecognitionErrorEvent) => {
       setIsListening(false)
       if (audioLevelRef.current) { clearInterval(audioLevelRef.current); audioLevelRef.current = null }
       setAudioLevel(0)
-      if (e.error === "not-allowed") {
+      if (_e.error === "not-allowed") {
         const msg = "Permiso de micrófono denegado. Ve a Ajustes del navegador."
         speak(msg); vibrate([500, 100, 500]); toast.error(msg); setMicError(msg)
-      } else if (e.error === "network") {
+      } else if (_e.error === "network") {
         const msg = "Sin conexión para reconocimiento de voz."
         speak(msg); vibrate([300, 100, 300]); toast.warning(msg); setMicError(msg)
-      } else if (e.error === "no-speech") {
+      } else if (_e.error === "no-speech") {
         const msg = "No se detectó voz. Intenta de nuevo."
         speak(msg); vibrate([200, 100, 200]); toast.warning(msg)
       } else {
@@ -897,7 +899,7 @@ export default function UniConnect() {
         }
       }, 300)
     }
-  }, [isListening, profile, vibrate, speak, sendMessage])
+  }, [isListening, vibrate, speak, sendMessage])
 
   const sendPhrase = useCallback(async (p: Phrase) => {
     if (!token) {
@@ -927,13 +929,13 @@ export default function UniConnect() {
       } : item))
       vibrate(p.vibration)
       setBackendError(null)
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error("Error sending phrase to backend:", error)
       toast.error("No se pudo enviar la frase al backend.")
       setBackendError("Error de conexión con el backend para frases.")
       vibrate(p.vibration)
     }
-  }, [sendMessage, vibrate, token])
+  }, [sendMessage, vibrate, token, speak])
 
   const addCustomPhrase = useCallback(() => {
     const text = newPhraseText.trim()
@@ -985,7 +987,7 @@ export default function UniConnect() {
       toast.error("🆘 Emergencia enviada al backend", {
         duration: 6000,
       })
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error("Error triggering emergency in backend:", error)
       toast.error("No se pudo enviar la emergencia al backend. Llamando al número local.", {
         duration: 6000,

@@ -1,4 +1,4 @@
-import { expect, afterEach, vi } from 'vitest'
+import { afterEach, vi } from 'vitest'
 import { cleanup } from '@testing-library/react'
 import '@testing-library/jest-dom'
 
@@ -43,7 +43,7 @@ class MockSpeechSynthesisUtterance {
   volume = 1
   onstart: (() => void) | null = null
   onend: (() => void) | null = null
-  onerror: ((event: any) => void) | null = null
+  onerror: ((event: unknown) => void) | null = null
 }
 
 class MockSpeechSynthesis {
@@ -70,8 +70,8 @@ class MockSpeechRecognition {
   interimResults = false
   lang = ''
   maxAlternatives = 0
-  onresult: ((event: any) => void) | null = null
-  onerror: ((event: any) => void) | null = null
+  onresult: ((event: unknown) => void) | null = null
+  onerror: ((event: unknown) => void) | null = null
   onend: (() => void) | null = null
   onstart: (() => void) | null = null
   start = vi.fn()
