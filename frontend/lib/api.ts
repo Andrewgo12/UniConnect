@@ -73,7 +73,14 @@ export function loginUser(email: string, password: string) {
 export function registerUser(name: string, email: string, password: string, password_confirmation: string) {
   return apiFetch<AuthResponse>("/api/v1/auth/register", {
     method: "POST",
-    body: JSON.stringify({ name, email, password, password_confirmation }),
+    body: JSON.stringify({
+      name,
+      email,
+      password,
+      password_confirmation,
+      terms_accepted: true,
+      privacy_accepted: true,
+    }),
   })
 }
 

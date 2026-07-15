@@ -1,0 +1,233 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>UniConnect — Diagnóstico de Medios</title>
+  <style>
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial; padding: 20px; }
+    button { margin: 6px 6px 6px 0; padding: 8px 12px; }
+    .status { margin: 8px 0; padding: 10px; border: 1px solid #ddd; border-radius: 6px; }
+    video { max-width: 320px; border: 1px solid #ccc; border-radius: 6px; display:block; margin-top:8px }
+    .meter { width: 320px; height: 12px; background: #eee; border-radius: 6px; overflow:hidden; }
+    .meter > i { display:block; height:100%; width:0%; background: #38a169; }
+  </style>
+</head>
+<body>
+  <h1>Diagnóstico de Cámara / Micrófono / Altavoces</h1>
+  <p>Usa los botones para pedir permisos y comprobar que cada dispositivo funciona. Abre la consola (F12) si algo falla.</p>
+
+  <div class="status" id="permStatus">Comprobando APIs...</div>
+
+  <section>
+    <h2>Cámara</h2>
+    <div>
+      <button id="btnStartCam">Probar cámara (pedir permiso)</button>
+      <button id="btnStopCam">Detener cámara</button>
+      <div id="camMsg"></div>
+      <video id="video" autoplay playsinline muted></video>
+    </div>
+  </section>
+
+  <section>
+    <h2>Micrófono</h2>
+    <div>
+      <button id="btnStartMic">Probar micrófono (pedir permiso)</button>
+      <button id="btnStopMic">Detener micrófono</button>
+      <div id="micMsg"></div>
+      <div class="meter" aria-hidden="true"><i id="meterFill"></i></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Altavoces / Reproducción</h2>
+    <div>
+      <button id="btnPlayTone">Reproducir tono (test altavoz)</button>
+      <button id="btnPlayAudio">Reproducir audio de prueba</button>
+      <div id="speakerMsg"></div>
+      <p style="font-size:0.9rem; color:#555; margin-top:6px; max-width:520px;">Si el botón de audio falla, usa el botón de tono. El tono Web Audio es suficiente para verificar altavoces.</p>
+    </div>
+  </section>
+
+  <section>
+    <h2>Permisos</h2>
+    <div>
+      <button id="btnCheckPerms">Comprobar estado de permisos</button>
+      <pre id="permsOut" style="white-space:pre-wrap; background:#f7fafc; padding:8px; border-radius:6px; border:1px solid #eee"></pre>
+    </div>
+  </section>
+
+  <script>
+    const permStatus = document.getElementById('permStatus')
+    const camMsg = document.getElementById('camMsg')
+    const micMsg = document.getElementById('micMsg')
+    const speakerMsg = document.getElementById('speakerMsg')
+    const videoEl = document.getElementById('video')
+    const meterFill = document.getElementById('meterFill')
+    const permsOut = document.getElementById('permsOut')
+
+    let camStream = null
+    let micStream = null
+    let audioCtx = null
+    let analyser = null
+    let dataArray = null
+    let micAnim = null
+
+    function updateApiStatus() {
+      const supports = {
+        mediaDevices: !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia),
+        permissions: !!(navigator.permissions && navigator.permissions.query),
+        speechRecognition: !!(window.SpeechRecognition || window.webkitSpeechRecognition),
+        audioContext: !!(window.AudioContext || window.webkitAudioContext),
+        secureContext: window.isSecureContext,
+      }
+      permStatus.textContent = `Origen: ${window.location.origin}. APIs detectadas: ${JSON.stringify(supports)}`
+    }
+
+    async function startCamera() {
+      if (!window.isSecureContext && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') {
+        camMsg.textContent = 'La cámara solo funciona en HTTPS o en localhost. Abre la app en http://localhost:3000 o usa HTTPS.'
+        return
+      }
+      camMsg.textContent = 'Solicitando cámara...'
+      try {
+        camStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' }, audio: false })
+        videoEl.srcObject = camStream
+        camMsg.textContent = 'Cámara activa — mira el video.'
+      } catch (e) {
+        console.error('startCamera error', e)
+        const message = (e && e.message ? e.message : e)
+        camMsg.textContent = 'Error al activar cámara: ' + message + '. Si el navegador bloqueó el permiso, abre el candado de la URL y permite cámara.'
+      }
+    }
+
+    function stopCamera() {
+      if (camStream) {
+        camStream.getTracks().forEach(t => t.stop())
+        camStream = null
+        videoEl.srcObject = null
+        camMsg.textContent = 'Cámara detenida.'
+      }
+    }
+
+    async function startMic() {
+      micMsg.textContent = 'Solicitando micrófono...'
+      try {
+        micStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false })
+        micMsg.textContent = 'Micrófono activo.'
+        setupAudioMeter(micStream)
+      } catch (e) {
+        console.error('startMic error', e)
+        const message = (e && e.message ? e.message : e)
+        micMsg.textContent = 'Error al activar micrófono: ' + message + '. Si el navegador bloqueó el permiso, abre el candado de la URL y permite micrófono.'
+      }
+    }
+
+    function stopMic() {
+      if (micStream) {
+        micStream.getTracks().forEach(t => t.stop())
+        micStream = null
+        micMsg.textContent = 'Micrófono detenido.'
+        teardownAudioMeter()
+      }
+    }
+
+    function setupAudioMeter(stream) {
+      if (!window.AudioContext && !window.webkitAudioContext) {
+        micMsg.textContent = 'AudioContext no soportado en este navegador.'
+        return
+      }
+      audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)()
+      const source = audioCtx.createMediaStreamSource(stream)
+      analyser = audioCtx.createAnalyser()
+      analyser.fftSize = 256
+      source.connect(analyser)
+      const bufferLength = analyser.frequencyBinCount
+      dataArray = new Uint8Array(bufferLength)
+
+      function tick() {
+        analyser.getByteFrequencyData(dataArray)
+        // compute simple RMS
+        let sum = 0
+        for (let i = 0; i < dataArray.length; i++) { sum += dataArray[i] * dataArray[i] }
+        const rms = Math.sqrt(sum / dataArray.length) / 255
+        meterFill.style.width = Math.min(100, Math.max(2, rms * 100)) + '%'
+        micAnim = requestAnimationFrame(tick)
+      }
+      tick()
+    }
+
+    function teardownAudioMeter() {
+      if (micAnim) cancelAnimationFrame(micAnim)
+      micAnim = null
+      if (analyser) { analyser.disconnect(); analyser = null }
+      if (audioCtx && audioCtx.state !== 'closed') { /* leave AudioContext open - some browsers require user gesture to close */ }
+      meterFill.style.width = '0%'
+    }
+
+    function playTone() {
+      try {
+        const ctx = new (window.AudioContext || window.webkitAudioContext)()
+        const o = ctx.createOscillator()
+        const g = ctx.createGain()
+        o.type = 'sine'
+        o.frequency.setValueAtTime(440, ctx.currentTime)
+        g.gain.setValueAtTime(0.001, ctx.currentTime)
+        o.connect(g)
+        g.connect(ctx.destination)
+        // ramp gain to audible then back
+        g.gain.exponentialRampToValueAtTime(0.1, ctx.currentTime + 0.05)
+        o.start()
+        setTimeout(() => {
+          g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.02)
+          setTimeout(() => { try { o.stop(); ctx.close() } catch { } }, 100)
+        }, 300)
+        speakerMsg.textContent = 'Tono reproducido (si oyes, altavoces OK).'
+      } catch (e) {
+        console.error('playTone error', e)
+        speakerMsg.textContent = 'No se pudo reproducir tono: ' + (e.message || e)
+      }
+    }
+
+    function playAudioFile() {
+      speakerMsg.textContent = 'Reproduciendo tono de prueba...'
+      playTone()
+    }
+
+    async function checkPermissions() {
+      permsOut.textContent = ''
+      if (!navigator.permissions) { permsOut.textContent = 'API Permissions no soportada.'; return }
+      const names = ['camera','microphone']
+      for (const name of names) {
+        try {
+          // @ts-ignore
+          const p = await navigator.permissions.query({ name })
+          permsOut.textContent += name + ': ' + p.state + "\n"
+        } catch (e) {
+          permsOut.textContent += name + ': no disponible / no soportado\n'
+        }
+      }
+      // Also try enumerating devices
+      if (navigator.mediaDevices && navigator.mediaDevices.enumerateDevices) {
+        try {
+          const devices = await navigator.mediaDevices.enumerateDevices()
+          permsOut.textContent += '\nDevices:\n'
+          devices.forEach(d => permsOut.textContent += `${d.kind} - ${d.label || '(oculto)'} - id:${d.deviceId}\n`)
+        } catch (e) {
+          permsOut.textContent += '\nNo se pudieron enumerar dispositivos: ' + e.message + '\n'
+        }
+      }
+    }
+
+    document.getElementById('btnStartCam').addEventListener('click', startCamera)
+    document.getElementById('btnStopCam').addEventListener('click', stopCamera)
+    document.getElementById('btnStartMic').addEventListener('click', startMic)
+    document.getElementById('btnStopMic').addEventListener('click', stopMic)
+    document.getElementById('btnPlayTone').addEventListener('click', playTone)
+    document.getElementById('btnPlayAudio').addEventListener('click', playAudioFile)
+    document.getElementById('btnCheckPerms').addEventListener('click', checkPermissions)
+
+    updateApiStatus()
+  </script>
+</body>
+</html>

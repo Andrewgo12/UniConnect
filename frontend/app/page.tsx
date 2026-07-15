@@ -18,18 +18,19 @@ import {
   Drawer, DrawerClose, DrawerContent, DrawerDescription,
   DrawerFooter, DrawerHeader, DrawerTitle,
 } from "@/components/ui/drawer"
-import { textToMorse } from "@/lib/morse"
 import { loginUser, registerUser, fetchMe, fetchMessages, postMessage, sendPhrase as apiSendPhrase, triggerEmergency as apiTriggerEmergency, fetchDefaultPhrases, ApiUser, ApiPhrase } from "@/lib/api"
 import { toast } from "sonner"
 import { useIsMobile } from "@/hooks/use-mobile"
-
-type Profile = { blind: boolean; deaf: boolean; mute: boolean }
+import { useAccessibility, AccessibilityProfile } from "@/hooks/useAccessibility"
+import { useSpeechRecognition } from "@/hooks/useSpeechRecognition"
+import { useSpeechSynthesis } from "@/hooks/useSpeechSynthesis"
+import { useVibration } from "@/hooks/useVibration"
 
 type AuthMode = "login" | "register"
 
 type _ApiMessage = { id: string | number; content: string; type: string; created_at: string }
 
-const PHRASES = [
+const PHRASES_DATA = [
   { id: 1, text: "Sí", icon: "✓", vibration: [100] },
   { id: 2, text: "No", icon: "✗", vibration: [100, 80, 100] },
   { id: 3, text: "Ayuda", icon: "!", vibration: [200, 100, 200, 100, 200] },
@@ -421,6 +422,11 @@ export default function UniConnect() {
   const cameraStreamRef = useRef<MediaStream | null>(null)
   const [cameraActive, setCameraActive] = useState(false)
   const [cameraError, setCameraError] = useState<string | null>(null)
+  const [mediaPermissionStatus, setMediaPermissionStatus] = useState<string | null>(null)
+  const [cookieConsent, setCookieConsent] = useState<boolean>(() => {
+    if (typeof window === "undefined") return false
+    return localStorage.getItem("uniconnect-cookie-consent") === "true"
+  })
   const [isRecording, setIsRecording] = useState(false)
   const recordedBlobRef = useRef<Blob | null>(null)
 
@@ -755,10 +761,80 @@ export default function UniConnect() {
     setCameraActive(false)
   }, [])
 
+  const requestCameraPermission = useCallback(async () => {
+    if (typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia) {
+      setMediaPermissionStatus("Tu navegador no soporta solicitud de cámara.")
+      return
+    }
+
+    if (!window.isSecureContext && !["localhost", "127.0.0.1"].includes(window.location.hostname)) {
+      setMediaPermissionStatus(
+        `La cámara solo funciona en HTTPS o en localhost. Origen actual: ${window.location.origin}. Usa http://localhost:3000 o configura HTTPS.`
+      )
+      return
+    }
+
+    try {
+      await navigator.mediaDevices.getUserMedia({ video: true, audio: false })
+      setMediaPermissionStatus("Permiso de cámara concedido. Puedes iniciar la cámara.")
+    } catch (error: unknown) {
+      setMediaPermissionStatus(`No se pudo obtener permiso de cámara: ${(error as Error).message}`)
+    }
+  }, [])
+
+  const requestMicrophonePermission = useCallback(async () => {
+    if (typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia) {
+      setMediaPermissionStatus("Tu navegador no soporta solicitud de micrófono.")
+      return
+    }
+
+    if (!window.isSecureContext && !["localhost", "127.0.0.1"].includes(window.location.hostname)) {
+      setMediaPermissionStatus(
+        `El micrófono solo funciona en HTTPS o en localhost. Origen actual: ${window.location.origin}. Usa http://localhost:3000 o configura HTTPS.`
+      )
+      return
+    }
+
+    try {
+      await navigator.mediaDevices.getUserMedia({ audio: true, video: false })
+      setMediaPermissionStatus("Permiso de micrófono concedido. Puedes usar la voz.")
+    } catch (error: unknown) {
+      setMediaPermissionStatus(`No se pudo obtener permiso de micrófono: ${(error as Error).message}`)
+    }
+  }, [])
+
+  const requestAllPermissions = useCallback(async () => {
+    if (!cookieConsent) acceptCookieConsent()
+    setMediaPermissionStatus("Solicitando permisos de cámara y micrófono...")
+    await requestCameraPermission()
+    await requestMicrophonePermission()
+    setMediaPermissionStatus("Permisos solicitados. Si el navegador bloquea alguno, abre el candado de la URL y permite la cámara/micrófono.")
+  }, [acceptCookieConsent, cookieConsent, requestCameraPermission, requestMicrophonePermission])
+
+  const acceptCookieConsent = useCallback(() => {
+    setCookieConsent(true)
+    try { localStorage.setItem("uniconnect-cookie-consent", "true") } catch { }
+    toast.success("Has aceptado cookies y permisos de servicio.")
+  }, [])
+
+  useEffect(() => {
+    if (typeof window === "undefined") return
+    try {
+      if (cookieConsent) localStorage.setItem("uniconnect-cookie-consent", "true")
+    } catch { }
+  }, [cookieConsent])
+
   const startCamera = useCallback(async () => {
     if (cameraActive) return
     if (typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia) {
       const msg = "Tu navegador no soporta cámara."
+      setCameraError(msg)
+      speak(msg)
+      return
+    }
+
+    if (typeof window !== "undefined" && !window.isSecureContext && !["localhost", "127.0.0.1"].includes(window.location.hostname)) {
+      const msg = "La cámara solo funciona en HTTPS o en localhost. Abre la app en http://localhost:3000 o usa HTTPS."
       setCameraError(msg)
       speak(msg)
       return
@@ -781,6 +857,8 @@ export default function UniConnect() {
           msg = "Permiso de cámara denegado."
         } else if (error.name === "NotFoundError" || error.name === "DevicesNotFoundError") {
           msg = "No se encontró una cámara disponible."
+        } else if (error.name === "SecurityError" || error.name === "NotSupportedError") {
+          msg = "La cámara solo funciona en HTTPS o en localhost. Abre la app en http://localhost:3000 o usa HTTPS."
         }
       }
       setCameraError(msg)
@@ -805,7 +883,6 @@ export default function UniConnect() {
       if (!cameraStreamRef.current) return reject(new Error('No camera stream'))
       try {
         const options: MediaRecorderOptions = { mimeType: 'video/webm;codecs=vp8' }
-        // @ts-expect-error some browsers tienen MediaRecorder types distintos
         const mr = new MediaRecorder(cameraStreamRef.current, options)
         const chunks: Blob[] = []
         mr.ondataavailable = (ev: BlobEvent) => { if (ev.data && ev.data.size > 0) chunks.push(ev.data) }
@@ -865,7 +942,8 @@ export default function UniConnect() {
     const start = Date.now()
     const poll = async (): Promise<string | null> => {
       try {
-        const res = await fetch(`/api/v1/sign-languages/${id}`)
+        const headers = token ? { Authorization: `Bearer ${token}` } : undefined
+        const res = await fetch(`/api/v1/sign-languages/${id}`, { headers })
         if (!res.ok) return null
         const data = await res.json()
         const transcript = data?.transcript ?? data?.data?.transcript ?? null
@@ -876,7 +954,7 @@ export default function UniConnect() {
       return poll()
     }
     return poll()
-  }, [])
+  }, [token])
 
   const captureAndTranslate = useCallback(async () => {
     if (!cameraActive) { speak('Activa la cámara primero'); return }
@@ -1247,6 +1325,24 @@ export default function UniConnect() {
             <p className="text-sm text-muted-foreground mt-2">Inicia sesión o crea una cuenta para conectar la interfaz con el backend.</p>
           </div>
 
+          {!cookieConsent && (
+            <Alert className="mb-4">
+              <AlertTitle>Permisos y cookies</AlertTitle>
+              <AlertDescription>
+                UniConnect usa cookies y permisos de cámara/micrófono para ofrecer funciones de voz y traducción de señas.
+                Acepta cookies y luego pide los permisos cuando estés listo.
+              </AlertDescription>
+              <div className="mt-3 flex flex-col sm:flex-row gap-2">
+                <Button type="button" onClick={acceptCookieConsent} className="w-full sm:w-auto">
+                  Aceptar cookies y servicios
+                </Button>
+                <Button type="button" variant="outline" onClick={() => setMediaPermissionStatus("Puedes habilitar permisos cuando quieras desde esta misma pantalla.") } className="w-full sm:w-auto">
+                  Más tarde
+                </Button>
+              </div>
+            </Alert>
+          )}
+
           {authError && (
             <Alert variant="destructive" className="mb-4">
               <AlertTitle>Error</AlertTitle>
@@ -1321,6 +1417,27 @@ export default function UniConnect() {
             {authMode === "login"
               ? "Si todavía no tienes cuenta, regístrate para conectar con el backend."
               : "Usa el mismo correo y contraseña para registrarte y luego acceder al sistema."}
+          </div>
+
+          <div className="rounded-2xl border border-border bg-card p-4 mb-4">
+            <p className="text-sm font-semibold">Permisos de cámara y micrófono</p>
+            <p className="text-xs text-muted-foreground mb-3">
+              Usa estos botones para solicitar los permisos de audio y video antes de iniciar la aplicación.
+            </p>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+              <Button type="button" onClick={requestMicrophonePermission} className="w-full">
+                Permitir micrófono
+              </Button>
+              <Button type="button" onClick={requestCameraPermission} className="w-full">
+                Permitir cámara
+              </Button>
+              <Button type="button" variant="secondary" onClick={requestAllPermissions} className="w-full">
+                Permitir todo
+              </Button>
+            </div>
+            {mediaPermissionStatus && (
+              <p className="mt-3 text-sm text-foreground">{mediaPermissionStatus}</p>
+            )}
           </div>
 
           <div className="mt-6 text-center">
